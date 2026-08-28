@@ -1598,7 +1598,8 @@ def analyze_word(word):
     root = normalize_root(
         best.get("root", "")
     )
-
+    st.write("DEBUG ROOT:", best.get("root"))
+    st.json(best)
     if not root_is_real(root):
         return {
             "success": False,
