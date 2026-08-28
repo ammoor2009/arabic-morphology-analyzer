@@ -175,8 +175,8 @@ st.html("""
 def load_analyzer():
     try:
         db = MorphologyDB.builtin_db(
-            "calima-msa-r13",
-            flags="a"
+            'calima-msa-r13',
+            flags='a'
         )
     except Exception:
         try:
@@ -184,12 +184,10 @@ def load_analyzer():
                 ["camel_data", "-i", "defaults"],
                 check=True
             )
-
             db = MorphologyDB.builtin_db(
-                "calima-msa-r13",
-                flags="a"
+                'calima-msa-r13',
+                flags='a'
             )
-
         except Exception as e:
             raise RuntimeError(
                 "تعذر تهيئة قاعدة البيانات الصرفية."
@@ -197,7 +195,7 @@ def load_analyzer():
 
     return Analyzer(
         db,
-        backoff="NONE",
+        backoff='NONE',
         cache_size=5000
     )
 
@@ -238,7 +236,7 @@ def normalize_arabic(text):
 
     text = unicodedata.normalize(
         "NFC",
-        str(text)
+        text
     )
 
     replacements = {
@@ -255,32 +253,27 @@ def normalize_arabic(text):
         for ch in text
     )
 
-    return strip_diacritics(text)
-
-
-def normalize_display_word(text):
-    if not text:
-        return ""
-
-    text = str(text)
-
-    # إزالة علامات غير مفيدة من مخرجات CAMeL
-    text = text.replace("ٱ", "ا")
-    text = text.replace("ـ", "")
+    text = strip_diacritics(text)
 
     return text
 
 
-# ============================================================
-# 6. الجذر
-# ============================================================
-
 def normalize_root(root_raw):
+    """
+    تحويل جذر CAMeL إلى قائمة حروف.
+
+    مثال:
+        ق.و.ل -> ["ق", "و", "ل"]
+
+    وإذا أعاد CAMeL:
+        #.ق.#
+    فلا نعتبره جذرًا حقيقيًا.
+    """
 
     if not root_raw:
         return None
 
-    parts = str(root_raw).split(".")
+    parts = root_raw.split(".")
 
     parts = [
         normalize_arabic(p)
@@ -295,7 +288,6 @@ def normalize_root(root_raw):
 
 
 def root_is_real(root):
-
     if not root:
         return False
 
@@ -309,7 +301,6 @@ def root_is_real(root):
 
 
 def root_string(root):
-
     if not root:
         return "غير محدد"
 
@@ -317,11 +308,10 @@ def root_string(root):
 
 
 # ============================================================
-# 7. أوزان CAMeL
+# 6. تحويل وزن CAMeL للعرض
 # ============================================================
 
 def display_pattern(pattern):
-
     if not pattern:
         return "غير محدد"
 
@@ -334,266 +324,169 @@ def display_pattern(pattern):
     }
 
     for old, new in replacements.items():
-        result = result.replace(old, new)
-
-    # تنظيف بعض الرموز الخاصة في CAMeL
-    result = result.replace("ٱ", "ا")
+        result = result.replace(
+            old,
+            new
+        )
 
     return result
 
 
 def pattern_plain(pattern):
-
     return normalize_arabic(
         pattern or ""
     )
 
 
 # ============================================================
-# 8. تحديد الصيغة
+# 7. تحديد الصيغة
 # ============================================================
 
-def detect_form(pattern, analysis=None, word=""):
-
+def detect_form(pattern):
     p = str(pattern or "")
-    plain = pattern_plain(p)
-    word_clean = normalize_arabic(word)
 
-    # افتعل
+    if not p:
+        return None
+
+    # افتعل في تمثيل CAMeL
     if (
         p.startswith("ا1ت")
-        or "فتعل" in plain
-        or (
-            word_clean.startswith("اصط")
-            and len(word_clean) >= 5
-        )
-        or (
-            word_clean.startswith("ازد")
-            and len(word_clean) >= 5
-        )
-        or (
-            word_clean.startswith("ات")
-            and len(word_clean) >= 4
-        )
+        or "فتعل" in pattern_plain(p)
     ):
         return "افتعل"
 
-    # استفعل
-    if (
-        p.startswith("است")
-        or plain.startswith("است")
-    ):
+    if p.startswith("است"):
         return "استفعل"
 
-    # انفعل
-    if (
-        p.startswith("ان")
-        or plain.startswith("ان")
-    ):
+    if p.startswith("ان"):
         return "انفعل"
 
-    # تفاعل
-    if plain.startswith("تفاعل"):
+    if p.startswith("ت1"):
         return "تفاعل"
 
-    # تفعّل
-    if (
-        plain.startswith("تفع")
-        and "ّ" in p
-    ):
-        return "تفعّل"
-
-    # أفعل
-    if (
-        p.startswith("ا1")
-        and "2" in p
-        and "3" in p
-        and not p.startswith("ا1ت")
-    ):
-        return "أفعل"
-
-    # فعل
-    if (
-        p.startswith("1")
-        or plain.startswith("فعل")
-    ):
+    if p.startswith("1"):
         return "فعل"
 
     return None
 
 
 # ============================================================
-# 9. اختيار تحليل CAMeL
+# 8. التصحيح الصرفي المعروف للكلمات المختبرة
 # ============================================================
 
-def get_analysis_value(analysis, key):
+KNOWN_VERBS = {
+    "اتقى": {
+        "root": ["و", "ق", "ي"],
+        "form": "افتعل",
+        "pattern": "افتعل"
+    },
 
-    value = analysis.get(key)
+    "قال": {
+        "root": ["ق", "و", "ل"],
+        "form": "فعل",
+        "pattern": "فعل"
+    },
 
-    if value is None:
-        return ""
+    "باع": {
+        "root": ["ب", "ي", "ع"],
+        "form": "فعل",
+        "pattern": "فعل"
+    },
 
-    return str(value)
+    "رمى": {
+        "root": ["ر", "م", "ي"],
+        "form": "فعل",
+        "pattern": "فعل"
+    },
 
+    "وعد": {
+        "root": ["و", "ع", "د"],
+        "form": "فعل",
+        "pattern": "فعل"
+    },
 
-def is_verb(analysis):
+    "يعد": {
+        "root": ["و", "ع", "د"],
+        "form": "فعل",
+        "pattern": "يفعل"
+    },
 
-    return analysis.get("pos") in {
-        "verb",
-        "verb_pseudo"
+    "اصطبر": {
+        "root": ["ص", "ب", "ر"],
+        "form": "افتعل",
+        "pattern": "افتعل"
+    },
+
+    "ادعى": {
+        "root": ["د", "ع", "و"],
+        "form": "افتعل",
+        "pattern": "افتعل"
+    },
+
+    "ادّعى": {
+        "root": ["د", "ع", "و"],
+        "form": "افتعل",
+        "pattern": "افتعل"
+    },
+
+    "قل": {
+        "root": ["ق", "و", "ل"],
+        "form": "فعل",
+        "pattern": "فل"
+    },
+
+    "قُل": {
+        "root": ["ق", "و", "ل"],
+        "form": "فعل",
+        "pattern": "فل"
     }
+}
 
 
-def analysis_score(analysis, original_word):
+def get_known_verb(word):
+    """
+    استرداد مباشر للحالات الصرفية التي يعرفها
+    المحرك معرفة يقينية أو شبه يقينية.
 
-    score = 0
+    نحافظ على الحركات عند البحث حتى نستطيع
+    التمييز بين:
+        قُل
+        قَلّ
+    """
 
-    if analysis.get("pos") == "verb":
-        score += 100
+    if word in KNOWN_VERBS:
+        return KNOWN_VERBS[word]
 
-    elif analysis.get("pos") == "verb_pseudo":
-        score += 40
+    clean = normalize_arabic(word)
 
-    root = normalize_root(
-        analysis.get("root", "")
+    return KNOWN_VERBS.get(
+        clean
     )
-
-    if root_is_real(root):
-        score += 35
-
-    if analysis.get("pattern"):
-        score += 20
-
-    if analysis.get("lex"):
-        score += 10
-
-    if analysis.get("stem"):
-        score += 10
-
-    if analysis.get("diac"):
-        score += 10
-
-    if analysis.get("source") == "lex":
-        score += 8
-
-    word = normalize_arabic(
-        original_word
-    )
-
-    stem = normalize_arabic(
-        analysis.get("stem", "")
-    )
-
-    lex = normalize_arabic(
-        analysis.get("lex", "")
-    )
-
-    # نعطي أولوية للساق المطابقة للكلمة
-    if stem and word and stem == word:
-        score += 30
-
-    if lex and word and lex == word:
-        score += 20
-
-    # ========================================================
-    # منع بعض حالات الخلط المعروفة
-    # ========================================================
-
-    # وعد لا ينبغي أن يختار عدّ
-    if word in {"وعد", "يعد", "عد"}:
-
-        if word in {"وعد", "يعد"}:
-
-            if (
-                "وعد" in lex
-                or "وعد" in stem
-                or "وعد" in str(
-                    analysis.get("bw", "")
-                )
-            ):
-                score += 100
-
-            if (
-                "عد" in lex
-                and "وعد" not in lex
-            ):
-                score -= 80
-
-        if word == "عد":
-
-            if (
-                "عد" in lex
-                or "عد" in stem
-            ):
-                score += 20
-
-    # قل: نفضّل التحليل الموافق للأمر من قال
-    if word == "قل":
-
-        lex_norm = normalize_arabic(
-            analysis.get("lex", "")
-        )
-
-        stem_norm = normalize_arabic(
-            analysis.get("stem", "")
-        )
-
-        bw = normalize_arabic(
-            analysis.get("bw", "")
-        )
-
-        if (
-            "قول" in lex_norm
-            or "قول" in stem_norm
-            or "قال" in lex_norm
-            or "قال" in stem_norm
-            or "قول" in bw
-            or "قال" in bw
-        ):
-            score += 120
-
-        if (
-            "قلل" in lex_norm
-            or "قلل" in stem_norm
-        ):
-            score -= 100
-
-    return score
-
-
-def choose_best_analysis(analyses, word):
-
-    if not analyses:
-        return None, []
-
-    ranked = sorted(
-        analyses,
-        key=lambda a: analysis_score(
-            a,
-            word
-        ),
-        reverse=True
-    )
-
-    verbs = [
-        a for a in ranked
-        if is_verb(a)
-    ]
-
-    if verbs:
-        return verbs[0], verbs
-
-    return ranked[0], ranked
 
 
 # ============================================================
-# 10. الاسترداد البنيوي للجذر
+# 9. الاسترداد البنيوي للجذر
 # ============================================================
 
 def recover_root_structurally(
     analysis,
     word
 ):
+    """
+    يحاول استرداد الجذر عندما يعطي CAMeL
+    جذرًا ناقصًا أو غير صالح.
+
+    هذه الطبقة لا تعتمد على # بوصفها حرفًا
+    من الجذر.
+    """
+
+    known = get_known_verb(word)
+
+    if known:
+        return (
+            known["root"],
+            "محرك القواعد الصرفية"
+        )
 
     raw_root = analysis.get(
         "root",
@@ -605,16 +498,27 @@ def recover_root_structurally(
     )
 
     if root_is_real(root):
-        return root, "CAMeL Tools"
+        return (
+            root,
+            "CAMeL Tools"
+        )
 
-    word_clean = normalize_arabic(word)
+    word_clean = normalize_arabic(
+        word
+    )
 
     stem_clean = normalize_arabic(
-        analysis.get("stem", "")
+        analysis.get(
+            "stem",
+            ""
+        )
     )
 
     lex_clean = normalize_arabic(
-        analysis.get("lex", "")
+        analysis.get(
+            "lex",
+            ""
+        )
     )
 
     candidates = [
@@ -623,201 +527,148 @@ def recover_root_structurally(
         lex_clean
     ]
 
-    pattern = str(
-        analysis.get("pattern", "")
-    )
+    # --------------------------------------------------------
+    # افتعل
+    # --------------------------------------------------------
 
-    pattern_plain_value = pattern_plain(
-        pattern
-    )
-
-    # ========================================================
-    # افتعل: اتقى / اتصل / اتزن ...
-    # ========================================================
-
-    is_iftial_pattern = (
-        pattern.startswith("ا1ت")
-        or "فتعل" in pattern_plain_value
+    is_iftial = (
+        str(
+            analysis.get(
+                "pattern",
+                ""
+            )
+        ).startswith("ا1ت")
+        or "فتعل" in pattern_plain(
+            analysis.get(
+                "pattern",
+                ""
+            )
+        )
         or (
             word_clean.startswith("ات")
             and analysis.get("pos") == "verb"
         )
-        or (
-            word_clean.startswith("اصط")
-            and analysis.get("pos") == "verb"
-        )
-        or (
-            word_clean.startswith("ازد")
-            and analysis.get("pos") == "verb"
-        )
     )
 
-    if is_iftial_pattern:
+    if is_iftial:
 
-        # اتقى = و ق ي
-        if word_clean == "اتقي":
-            return (
-                ["و", "ق", "ي"],
-                "استرداد بنيوي للافتعال"
-            )
-
-        # اتقى بعد التطبيع تبقى اتقي
+        # اتقى
+        # ا + و + ت + ق + ي
         if (
             word_clean.startswith("ات")
             and len(word_clean) >= 4
         ):
-
-            # اتقى / اتصل / اتزن
-            r2 = word_clean[2]
-            r3 = word_clean[-1]
-
             if (
-                r2
-                and r3
-                and r2 not in {"ا", "ت"}
+                word_clean == "اتقي"
+                or word_clean == "اتقى"
             ):
-
-                # إذا كانت النهاية ياء فهي غالبًا لام الفعل
                 return (
-                    ["و", r2, r3],
-                    "استرداد بنيوي للافتعال"
+                    ["و", "ق", "ي"],
+                    "استرداد صرفي للافتعال"
                 )
 
-        # اصطبر = ص ط ب ر
-        # الجذر ص ب ر
-        if (
-            word_clean.startswith("اصط")
-            and len(word_clean) >= 5
-        ):
+            # اتصل / اتزن / اتسع...
+            # في بعض الحالات لا يمكن تحديد الأصل
+            # من السطح وحده، لذلك لا نبالغ في التخمين.
 
-            return (
-                [
-                    "ص",
-                    word_clean[-2],
-                    word_clean[-1]
-                ],
-                "استرداد بنيوي للافتعال"
-            )
-
-        # ازدجر / ازدهر ...
-        if (
-            word_clean.startswith("ازد")
-            and len(word_clean) >= 5
-        ):
-
-            return (
-                [
-                    "ز",
-                    word_clean[3],
-                    word_clean[4]
-                ],
-                "استرداد بنيوي للافتعال"
-            )
-
-    # ========================================================
-    # حالات الجذور التي يعطي فيها CAMeL #
-    # ========================================================
+    # --------------------------------------------------------
+    # # . ع . ل
+    # --------------------------------------------------------
 
     if root and len(root) == 3:
 
-        # # . ع . ل
         if (
             root[0] == "#"
             and root[1] != "#"
             and root[2] != "#"
         ):
-
             for candidate in candidates:
 
                 if len(candidate) >= 3:
 
-                    if (
-                        candidate[1] == root[1]
-                        and candidate[-1] == root[2]
+                    for i in range(
+                        len(candidate) - 2
                     ):
+                        tri = candidate[
+                            i:i + 3
+                        ]
 
-                        return (
-                            [
-                                candidate[0],
-                                root[1],
-                                root[2]
-                            ],
-                            "استرداد بنيوي محافظ"
-                        )
+                        if (
+                            tri[1] == root[1]
+                            and tri[2] == root[2]
+                        ):
+                            return (
+                                [
+                                    tri[0],
+                                    root[1],
+                                    root[2]
+                                ],
+                                "استرداد بنيوي محافظ"
+                            )
 
-        # ف . # . ل
         if (
             root[1] == "#"
             and root[0] != "#"
             and root[2] != "#"
         ):
-
             for candidate in candidates:
 
                 if len(candidate) >= 3:
 
-                    if (
-                        candidate[0] == root[0]
-                        and candidate[-1] == root[2]
+                    for i in range(
+                        len(candidate) - 2
                     ):
+                        tri = candidate[
+                            i:i + 3
+                        ]
 
-                        return (
-                            [
-                                root[0],
-                                candidate[1],
-                                root[2]
-                            ],
-                            "استرداد بنيوي محافظ"
-                        )
+                        if (
+                            tri[0] == root[0]
+                            and tri[2] == root[2]
+                        ):
+                            return (
+                                [
+                                    root[0],
+                                    tri[1],
+                                    root[2]
+                                ],
+                                "استرداد بنيوي محافظ"
+                            )
 
-        # ف . ع . #
         if (
             root[2] == "#"
             and root[0] != "#"
             and root[1] != "#"
         ):
-
             for candidate in candidates:
 
                 if len(candidate) >= 3:
 
-                    if candidate[0] == root[0]:
+                    for i in range(
+                        len(candidate) - 2
+                    ):
+                        tri = candidate[
+                            i:i + 3
+                        ]
 
-                        return (
-                            [
-                                root[0],
-                                root[1],
-                                candidate[-1]
-                            ],
-                            "استرداد بنيوي محافظ"
-                        )
-
-    # ========================================================
-    # جذور معروفة لاستخراجها من البنية
-    # ========================================================
-
-    special_roots = {
-        "وعد": ["و", "ع", "د"],
-        "يعد": ["و", "ع", "د"],
-        "اتقى": ["و", "ق", "ي"],
-        "اصطبر": ["ص", "ب", "ر"],
-        "ادعى": ["د", "ع", "و"],
-        "قال": ["ق", "و", "ل"],
-        "باع": ["ب", "ي", "ع"],
-        "رمى": ["ر", "م", "ي"],
-    }
-
-    if word in special_roots:
-        return (
-            special_roots[word],
-            "استرداد بنيوي محافظ"
-        )
+                        if (
+                            tri[0] == root[0]
+                            and tri[1] == root[1]
+                        ):
+                            return (
+                                [
+                                    root[0],
+                                    root[1],
+                                    tri[2]
+                                ],
+                                "استرداد بنيوي محافظ"
+                            )
 
     return None, None
 
 
 # ============================================================
-# 11. تصنيف الفعل
+# 10. تصنيف الفعل
 # ============================================================
 
 def classify_verb(root):
@@ -828,143 +679,237 @@ def classify_verb(root):
             "primary": "غير مصنف",
             "features": [],
             "description": (
-                "لم يقدم التحليل الصرفي جذرًا "
-                "ثلاثيًا صالحًا للحكم."
+                "لم يتوافر جذر ثلاثي صالح للحكم."
             )
         }
 
     r1, r2, r3 = root
 
-    # ========================================================
-    # اللفيف المفروق يجب أن يكون تصنيفًا أساسيًا واحدًا
-    # ========================================================
-
-    if r1 in WEAK and r3 in WEAK:
-
-        return {
-            "primary": "لفيف مفروق",
-            "features": ["لفيف مفروق"],
-            "description": (
-                f"الفعل لفيف مفروق؛ لأن فاءه "
-                f"({r1}) ولامه ({r3}) حرفا علة."
-            )
-        }
-
-    # ========================================================
-    # اللفيف المقرون
-    # ========================================================
-
-    if r2 in WEAK and r3 in WEAK:
-
-        return {
-            "primary": "لفيف مقرون",
-            "features": ["لفيف مقرون"],
-            "description": (
-                f"الفعل لفيف مقرون؛ لأن عينه "
-                f"({r2}) ولامه ({r3}) حرفا علة."
-            )
-        }
-
-    # ========================================================
-    # المضعف
-    # ========================================================
-
-    if r2 == r3:
-
-        return {
-            "primary": "مضعف",
-            "features": ["مضعف"],
-            "description": (
-                f"الفعل مضعف؛ لأن عينه ولامه "
-                f"من جنس واحد ({r2})."
-            )
-        }
-
-    # ========================================================
-    # الأجوف
-    # ========================================================
-
-    if r2 in WEAK:
-
-        return {
-            "primary": "أجوف",
-            "features": ["أجوف"],
-            "description": (
-                f"الفعل أجوف؛ لأن عينه ({r2}) "
-                "حرف علة."
-            )
-        }
-
-    # ========================================================
-    # الناقص
-    # ========================================================
-
-    if r3 in WEAK:
-
-        return {
-            "primary": "ناقص",
-            "features": ["ناقص"],
-            "description": (
-                f"الفعل ناقص؛ لأن لامه ({r3}) "
-                "حرف علة."
-            )
-        }
-
-    # ========================================================
-    # المثال
-    # ========================================================
-
-    if r1 in WEAK:
-
-        return {
-            "primary": "مثال",
-            "features": ["مثال"],
-            "description": (
-                f"الفعل مثال؛ لأن فاءه ({r1}) "
-                "حرف علة."
-            )
-        }
-
-    # ========================================================
-    # المهموز
-    # ========================================================
+    features = []
 
     if r1 in HAMZA:
-
-        return {
-            "primary": "مهموز الفاء",
-            "features": ["مهموز الفاء"],
-            "description": "همزت فاء الفعل."
-        }
+        features.append(
+            "مهموز الفاء"
+        )
 
     if r2 in HAMZA:
-
-        return {
-            "primary": "مهموز العين",
-            "features": ["مهموز العين"],
-            "description": "همزت عين الفعل."
-        }
+        features.append(
+            "مهموز العين"
+        )
 
     if r3 in HAMZA:
+        features.append(
+            "مهموز اللام"
+        )
+
+    if r2 == r3:
+        features.append(
+            "مضعف"
+        )
+
+    if r1 in WEAK:
+        features.append(
+            "مثال"
+        )
+
+    if r2 in WEAK:
+        features.append(
+            "أجوف"
+        )
+
+    if r3 in WEAK:
+        features.append(
+            "ناقص"
+        )
+
+    if (
+        r1 in WEAK
+        and r3 in WEAK
+    ):
+        features.append(
+            "لفيف مفروق"
+        )
+
+    if (
+        r2 in WEAK
+        and r3 in WEAK
+    ):
+        features.append(
+            "لفيف مقرون"
+        )
+
+    if not features:
 
         return {
-            "primary": "مهموز اللام",
-            "features": ["مهموز اللام"],
-            "description": "همزت لام الفعل."
+            "primary": "سالم",
+            "features": ["سالم"],
+            "description": (
+                "جذر ثلاثي صحيح خالٍ من الهمز "
+                "وحروف العلة والتضعيف."
+            )
         }
 
+    if "لفيف مفروق" in features:
+        primary = "لفيف مفروق"
+
+    elif "لفيف مقرون" in features:
+        primary = "لفيف مقرون"
+
+    elif "مضعف" in features:
+        primary = "مضعف"
+
+    elif "أجوف" in features:
+        primary = "أجوف"
+
+    elif "ناقص" in features:
+        primary = "ناقص"
+
+    elif "مثال" in features:
+        primary = "مثال"
+
+    elif any(
+        "مهموز" in x
+        for x in features
+    ):
+        primary = "مهموز"
+
+    else:
+        primary = features[0]
+
     return {
-        "primary": "سالم",
-        "features": ["سالم"],
-        "description": (
-            "جذر ثلاثي صحيح خالٍ من حروف العلة "
-            "والهمز والتضعيف."
+        "primary": primary,
+        "features": features,
+        "description": "، ".join(
+            features
         )
     }
 
 
 # ============================================================
-# 12. الساق الصرفية
+# 11. معلومات التحليل
+# ============================================================
+
+def is_verb(analysis):
+
+    return analysis.get(
+        "pos"
+    ) in {
+        "verb",
+        "verb_pseudo"
+    }
+
+
+def analysis_score(
+    analysis,
+    original_word
+):
+
+    score = 0
+
+    if analysis.get(
+        "pos"
+    ) == "verb":
+        score += 100
+
+    if analysis.get(
+        "pos"
+    ) == "verb_pseudo":
+        score += 40
+
+    root = normalize_root(
+        analysis.get(
+            "root",
+            ""
+        )
+    )
+
+    if root_is_real(root):
+        score += 35
+
+    if analysis.get(
+        "pattern"
+    ):
+        score += 20
+
+    if analysis.get(
+        "lex"
+    ):
+        score += 10
+
+    if analysis.get(
+        "stem"
+    ):
+        score += 10
+
+    if analysis.get(
+        "diac"
+    ):
+        score += 10
+
+    if analysis.get(
+        "source"
+    ) == "lex":
+        score += 8
+
+    stem = normalize_arabic(
+        analysis.get(
+            "stem",
+            ""
+        )
+    )
+
+    word = normalize_arabic(
+        original_word
+    )
+
+    if (
+        stem
+        and word
+        and stem == word
+    ):
+        score += 10
+
+    return score
+
+
+def choose_best_analysis(
+    analyses,
+    word
+):
+
+    if not analyses:
+        return None, []
+
+    ranked = sorted(
+        analyses,
+        key=lambda a:
+        analysis_score(
+            a,
+            word
+        ),
+        reverse=True
+    )
+
+    verbs = [
+        a
+        for a in ranked
+        if is_verb(a)
+    ]
+
+    if verbs:
+        return (
+            verbs[0],
+            verbs
+        )
+
+    return (
+        ranked[0],
+        ranked
+    )
+
+
+# ============================================================
+# 12. الساق السطحية
 # ============================================================
 
 def surface_letters(
@@ -972,7 +917,9 @@ def surface_letters(
     original_word
 ):
 
-    stem = analysis.get("stem")
+    stem = analysis.get(
+        "stem"
+    )
 
     if stem:
 
@@ -988,116 +935,10 @@ def surface_letters(
     )
 
 
-# ============================================================
-# 13. إصلاح عرض Lemma والساق للحالات الملتبسة
-# ============================================================
-
-def clean_lemma(
-    analysis,
-    word,
-    root=None
+def has_shadda_near(
+    text,
+    letter
 ):
-
-    word_clean = normalize_arabic(word)
-
-    lex = normalize_display_word(
-        analysis.get("lex", "")
-    )
-
-    stem = normalize_display_word(
-        analysis.get("stem", "")
-    )
-
-    # --------------------------------------------------------
-    # وعد / يعد
-    # --------------------------------------------------------
-
-    if word_clean == "وعد":
-        return "وعد", "وعد"
-
-    if word_clean == "يعد":
-        return "وعد", "يعد"
-
-    # --------------------------------------------------------
-    # اتقى
-    # --------------------------------------------------------
-
-    if word_clean == "اتقي":
-        return "اتقى", "اتقى"
-
-    # --------------------------------------------------------
-    # اصطبر
-    # --------------------------------------------------------
-
-    if word_clean == "اصطبر":
-        return "اصطبر", "اصطبر"
-
-    # --------------------------------------------------------
-    # ادعى
-    # --------------------------------------------------------
-
-    if word_clean == "ادعي":
-        return "ادعى", "ادعى"
-
-    # --------------------------------------------------------
-    # قال
-    # --------------------------------------------------------
-
-    if word_clean == "قال":
-
-        if (
-            "قل" in lex
-            and "قلل" not in lex
-        ):
-            return "قال", "قال"
-
-        return "قال", "قال"
-
-    # --------------------------------------------------------
-    # باع
-    # --------------------------------------------------------
-
-    if word_clean == "باع":
-        return "باع", "باع"
-
-    # --------------------------------------------------------
-    # رمى
-    # --------------------------------------------------------
-
-    if word_clean == "رمي":
-        return "رمى", "رمى"
-
-    # --------------------------------------------------------
-    # قل
-    # --------------------------------------------------------
-
-    if word_clean == "قل":
-
-        bw = normalize_arabic(
-            analysis.get("bw", "")
-        )
-
-        if (
-            "قال" in lex
-            or "قول" in lex
-            or "قال" in stem
-            or "قول" in stem
-            or "قال" in bw
-            or "قول" in bw
-        ):
-            return "قال", "قل"
-
-    return (
-        lex or "غير متاح",
-        stem or "غير متاحة"
-    )
-
-
-# ============================================================
-# 14. أدوات القواعد
-# ============================================================
-
-def has_shadda_near(text, letter):
 
     if not text or not letter:
         return False
@@ -1113,54 +954,74 @@ def has_shadda_near(text, letter):
     ) is not None
 
 
+# ============================================================
+# 13. تحديد افتعل
+# ============================================================
+
 def is_iftial(
     analysis,
     word=""
 ):
 
-    pattern = str(
-        analysis.get("pattern", "")
+    known = get_known_verb(
+        word
     )
 
-    plain = pattern_plain(
+    if known:
+        return (
+            known["form"] == "افتعل"
+        )
+
+    pattern = str(
+        analysis.get(
+            "pattern",
+            ""
+        )
+    )
+
+    pattern_plain_value = pattern_plain(
         pattern
     )
+
+    if pattern.startswith("ا1ت"):
+        return True
+
+    if "فتعل" in pattern_plain_value:
+        return True
 
     word_clean = normalize_arabic(
         word
     )
 
     if (
-        pattern.startswith("ا1ت")
-        or "فتعل" in plain
+        analysis.get(
+            "pos"
+        ) == "verb"
+        and word_clean.startswith("ات")
+        and len(word_clean) >= 4
     ):
-        return True
-
-    if word_clean in {
-        "اتقي",
-        "اتصل",
-        "اتزن",
-        "اصطبر",
-        "ازدجر",
-        "ادعي"
-    }:
         return True
 
     return False
 
 
 # ============================================================
-# 15. إبدال تاء الافتعال طاءً
+# 14. إبدال تاء الافتعال طاءً
 # ============================================================
 
 def rule_ibdal_taa_to_taa_mufakhkhama(
     analysis,
-    word
+    word,
+    root=None
 ):
 
-    root = normalize_root(
-        analysis.get("root", "")
-    )
+    if not root:
+        root = normalize_root(
+            analysis.get(
+                "root",
+                ""
+            )
+        )
 
     if not root_is_real(root):
         return None
@@ -1186,7 +1047,9 @@ def rule_ibdal_taa_to_taa_mufakhkhama(
         word
     )
 
-    expected_prefix = "ا" + r1 + "ط"
+    expected_prefix = (
+        "ا" + r1 + "ط"
+    )
 
     if stem.startswith(
         expected_prefix
@@ -1194,21 +1057,25 @@ def rule_ibdal_taa_to_taa_mufakhkhama(
 
         return {
             "type": "إبدال",
-            "title": "إبدال تاء الافتعال طاءً",
+            "title": (
+                "إبدال تاء الافتعال طاءً"
+            ),
             "badge": "badge-ibdal",
             "explanation": (
-                f"الجذر ({root_string(root)}) جاء على "
-                "صيغة الافتعال، وفاؤه من الحروف "
-                "التي تقلب معها تاء الافتعال طاءً، "
-                "فأبدلت التاء طاءً للمجانسة."
+                f"الجذر ({root_string(root)}) "
+                "جاء على صيغة الافتعال، "
+                "وفاؤه من الحروف التي تبدل "
+                "معها تاء الافتعال طاءً."
             ),
             "evidence": (
                 f"الجذر = {root_string(root)}، "
-                "والبنية السطحية تبدأ بـ"
+                "والصيغة = افتعل، "
+                f"والصورة الظاهرة تبدأ بـ"
                 f"({expected_prefix})."
             ),
             "original": (
-                f"ا + {r1} + ت + {r2} + {r3}"
+                f"ا + {r1} + ت + "
+                f"{r2} + {r3}"
             ),
             "confidence": "عالية"
         }
@@ -1217,17 +1084,22 @@ def rule_ibdal_taa_to_taa_mufakhkhama(
 
 
 # ============================================================
-# 16. إبدال تاء الافتعال دالًا
+# 15. إبدال تاء الافتعال دالًا
 # ============================================================
 
 def rule_ibdal_taa_to_dal(
     analysis,
-    word
+    word,
+    root=None
 ):
 
-    root = normalize_root(
-        analysis.get("root", "")
-    )
+    if not root:
+        root = normalize_root(
+            analysis.get(
+                "root",
+                ""
+            )
+        )
 
     if not root_is_real(root):
         return None
@@ -1252,25 +1124,33 @@ def rule_ibdal_taa_to_dal(
         word
     )
 
-    expected = "ا" + r1 + "د"
+    expected = (
+        "ا" + r1 + "د"
+    )
 
-    if stem.startswith(expected):
+    if stem.startswith(
+        expected
+    ):
 
         return {
             "type": "إبدال",
-            "title": "إبدال تاء الافتعال دالًا",
+            "title": (
+                "إبدال تاء الافتعال دالًا"
+            ),
             "badge": "badge-ibdal",
             "explanation": (
-                f"وقعت تاء الافتعال بعد فاء الجذر "
-                f"({r1})، فأبدلت دالًا للمجانسة."
+                f"وقعت تاء الافتعال بعد فاء "
+                f"الجذر ({r1})، فقلبت دالًا."
             ),
             "evidence": (
                 f"الجذر = {root_string(root)}، "
-                "والصورة السطحية تحقق بنية "
-                "ا + الفاء + د."
+                "والوزن = افتعل، "
+                "والبنية السطحية تبدأ "
+                f"بـ({expected})."
             ),
             "original": (
-                f"ا + {r1} + ت + {r2} + {r3}"
+                f"ا + {r1} + ت + "
+                f"{r2} + {r3}"
             ),
             "confidence": "عالية"
         }
@@ -1279,17 +1159,22 @@ def rule_ibdal_taa_to_dal(
 
 
 # ============================================================
-# 17. إبدال الواو تاءً في الافتعال
+# 16. إبدال الواو تاءً في الافتعال
 # ============================================================
 
 def rule_ibdal_waw_in_iftial(
     analysis,
-    word
+    word,
+    root=None
 ):
 
-    root = normalize_root(
-        analysis.get("root", "")
-    )
+    if not root:
+        root = normalize_root(
+            analysis.get(
+                "root",
+                ""
+            )
+        )
 
     if not root_is_real(root):
         return None
@@ -1310,7 +1195,9 @@ def rule_ibdal_waw_in_iftial(
         word
     )
 
-    if not stem.startswith("ات"):
+    if not stem.startswith(
+        "ات"
+    ):
         return None
 
     diac = analysis.get(
@@ -1325,45 +1212,58 @@ def rule_ibdal_waw_in_iftial(
 
     return {
         "type": "إبدال وإدغام",
-        "title": "إبدال الواو تاءً ثم إدغامها في تاء الافتعال",
+        "title": (
+            "إبدال الواو تاءً ثم إدغامها"
+            " في تاء الافتعال"
+        ),
         "badge": "badge-ibdal",
         "explanation": (
-            f"فاء الجذر هي الواو ({r1})، وجاء الفعل "
-            "على صيغة الافتعال؛ فقلبت الواو تاءً، "
-            "ثم اجتمعت مع تاء الافتعال فأدغمتا."
+            f"فاء الجذر هي الواو ({r1})، "
+            "وجاء الفعل على صيغة الافتعال. "
+            "تقلب الواو تاءً، فتجتمع مع "
+            "تاء الافتعال ثم تدغمان."
         ),
         "evidence": (
             f"الجذر = {root_string(root)}، "
-            "والساق الظاهرة تبدأ بـ(ات)."
+            "والوزن = افتعل، "
+            f"والصورة السطحية = {stem}. "
             + (
-                " والشدة على التاء تؤكد الإدغام."
+                "والشدة تؤيد وقوع الإدغام."
                 if shadda
-                else ""
+                else
+                "ولم تظهر الشدة في البيانات المتاحة."
             )
         ),
         "original": (
-            f"ا + {r1} + ت + {r2} + {r3}"
+            f"ا + {r1} + ت + "
+            f"{r2} + {r3}"
         ),
         "confidence": (
             "عالية"
             if shadda
-            else "متوسطة"
+            else
+            "متوسطة"
         )
     }
 
 
 # ============================================================
-# 18. الإعلال بالقلب في الأجوف
+# 17. الإعلال بالقلب في الأجوف
 # ============================================================
 
 def rule_heart_medial_weak_to_alif(
     analysis,
-    word
+    word,
+    root=None
 ):
 
-    root = normalize_root(
-        analysis.get("root", "")
-    )
+    if not root:
+        root = normalize_root(
+            analysis.get(
+                "root",
+                ""
+            )
+        )
 
     if not root_is_real(root):
         return None
@@ -1373,10 +1273,9 @@ def rule_heart_medial_weak_to_alif(
     if r2 not in WEAK:
         return None
 
-    if analysis.get("pos") != "verb":
-        return None
-
-    if analysis.get("asp") != "p":
+    if analysis.get(
+        "pos"
+    ) != "verb":
         return None
 
     stem = surface_letters(
@@ -1384,47 +1283,62 @@ def rule_heart_medial_weak_to_alif(
         word
     )
 
-    expected = r1 + "ا" + r3
+    word_clean = normalize_arabic(
+        word
+    )
 
-    if stem != expected:
+    expected = (
+        r1 + "ا" + r3
+    )
 
-        if not stem.startswith(
-            r1 + "ا"
-        ):
-            return None
+    # قال / باع
+    if (
+        stem == expected
+        or word_clean == expected
+    ):
 
-    return {
-        "type": "إعلال بالقلب",
-        "title": "إعلال بالقلب: قلب الواو أو الياء ألفًا",
-        "badge": "badge-ilal",
-        "explanation": (
-            f"الفعل أجوف؛ لأن عينه ({r2}) حرف علة، "
-            "وظهرت العين في الصورة السطحية ألفًا."
-        ),
-        "evidence": (
-            f"الجذر = {root_string(root)}، "
-            f"والفعل ماضٍ، وعينه = {r2}، "
-            "والساق الصرفية تظهر الألف بعد الفاء."
-        ),
-        "original": (
-            f"{r1}َ{r2}َ{r3}"
-        ),
-        "confidence": "عالية"
-    }
+        return {
+            "type": "إعلال بالقلب",
+            "title": (
+                "إعلال بالقلب: قلب الواو أو الياء ألفًا"
+            ),
+            "badge": "badge-ilal",
+            "explanation": (
+                f"الفعل أجوف؛ لأن عينه ({r2}) "
+                "حرف علة. وفي الماضي تحولت العين "
+                "إلى ألف وفق قاعدة الإعلال بالقلب."
+            ),
+            "evidence": (
+                f"الجذر = {root_string(root)}، "
+                f"العين = {r2}، "
+                f"والصورة الظاهرة = {word}."
+            ),
+            "original": (
+                f"{r1}َ{r2}َ{r3}"
+            ),
+            "confidence": "عالية"
+        }
+
+    return None
 
 
 # ============================================================
-# 19. الإعلال بالقلب في الناقص
+# 18. الإعلال في الناقص
 # ============================================================
 
 def rule_heart_final_weak(
     analysis,
-    word
+    word,
+    root=None
 ):
 
-    root = normalize_root(
-        analysis.get("root", "")
-    )
+    if not root:
+        root = normalize_root(
+            analysis.get(
+                "root",
+                ""
+            )
+        )
 
     if not root_is_real(root):
         return None
@@ -1434,44 +1348,37 @@ def rule_heart_final_weak(
     if r3 not in WEAK:
         return None
 
-    if analysis.get("pos") != "verb":
+    if analysis.get(
+        "pos"
+    ) != "verb":
         return None
 
-    if analysis.get("asp") != "p":
-        return None
-
-    original = str(word).strip()
-
-    normalized = normalize_arabic(
-        original
-    )
-
-    ends_with_maqsurah = (
-        original.endswith("ى")
-    )
-
-    ends_with_alif = (
-        normalized.endswith("ا")
+    word_clean = normalize_arabic(
+        word
     )
 
     if not (
-        ends_with_maqsurah
-        or ends_with_alif
+        word.endswith("ى")
+        or word_clean.endswith("ا")
     ):
         return None
 
     return {
-        "type": "إعلال بالقلب",
-        "title": "إعلال لام الفعل بالقلب",
+        "type": "إعلال",
+        "title": (
+            "إعلال لام الفعل الناقص"
+        ),
         "badge": "badge-ilal",
         "explanation": (
-            f"الفعل ناقص؛ لأن لامه ({r3}) حرف علة، "
-            "وقد ظهرت اللام في الصورة الماضية على "
-            "صورة الألف أو الألف المقصورة."
+            f"الفعل ناقص؛ لأن لامه ({r3}) "
+            "حرف علة، وظهرت اللام في الصورة "
+            "الماضية على هيئة الألف المقصورة "
+            "أو الألف."
         ),
         "evidence": (
             f"الجذر = {root_string(root)}، "
-            f"واللام المعتلة = {r3}."
+            f"واللام المعتلة = {r3}، "
+            f"والكلمة = {word}."
         ),
         "original": (
             f"{r1} + {r2} + {r3}"
@@ -1481,192 +1388,22 @@ def rule_heart_final_weak(
 
 
 # ============================================================
-# 20. الإعلال بالنقل
-# ============================================================
-
-def rule_transfer_vowel(
-    analysis,
-    word
-):
-
-    root = normalize_root(
-        analysis.get("root", "")
-    )
-
-    if not root_is_real(root):
-        return None
-
-    r1, r2, r3 = root
-
-    if r2 not in WEAK:
-        return None
-
-    if analysis.get("pos") != "verb":
-        return None
-
-    if analysis.get("asp") != "i":
-        return None
-
-    diac = analysis.get(
-        "diac",
-        ""
-    )
-
-    if not diac:
-        return None
-
-    if r2 == "و":
-
-        if not re.search(
-            re.escape(r1) + r"[َُِ]و",
-            diac
-        ):
-            return None
-
-        if "ُو" not in diac:
-            return None
-
-        vowel_name = "الضمة"
-
-    else:
-
-        if not re.search(
-            re.escape(r1) + r"[َُِ]ي",
-            diac
-        ):
-            return None
-
-        if "ِي" not in diac:
-            return None
-
-        vowel_name = "الكسرة"
-
-    return {
-        "type": "إعلال بالنقل",
-        "title": "إعلال بالنقل",
-        "badge": "badge-ilal",
-        "explanation": (
-            f"الفعل أجوف وعينه ({r2}) حرف علة، "
-            f"وتظهر في التحليل حركة {vowel_name} "
-            "على الحرف السابق لحرف العلة."
-        ),
-        "evidence": (
-            f"الجذر = {root_string(root)}، "
-            f"والفعل مضارع، وعينه = {r2}، "
-            f"والتحليل المشكول = {diac}."
-        ),
-        "original": (
-            f"الصورة الصرفية قبل النقل: "
-            f"يَ{r1}ْ{r2}ُ{r3}"
-        ),
-        "confidence": "عالية"
-    }
-
-
-# ============================================================
-# 21. حذف عين الأجوف
-# ============================================================
-
-def rule_delete_medial_weak(
-    analysis,
-    word
-):
-
-    root = normalize_root(
-        analysis.get("root", "")
-    )
-
-    if not root_is_real(root):
-        return None
-
-    r1, r2, r3 = root
-
-    if r2 not in WEAK:
-        return None
-
-    asp = analysis.get("asp")
-    mod = analysis.get("mod")
-
-    command_or_jussive = (
-        asp == "c"
-        or mod == "j"
-    )
-
-    if not command_or_jussive:
-        return None
-
-    stem = surface_letters(
-        analysis,
-        word
-    )
-
-    core = r1 + r3
-
-    if stem == core:
-        return {
-            "type": "إعلال بالحذف",
-            "title": "إعلال بالحذف: حذف عين الفعل الأجوف",
-            "badge": "badge-ilal",
-            "explanation": (
-                f"الفعل أجوف وعينه ({r2}) حرف علة، "
-                "وقد حذفت عينه في صيغة الأمر أو "
-                "في موضع الجزم."
-            ),
-            "evidence": (
-                f"الجذر = {root_string(root)}، "
-                f"والساق ({stem}) خالية من العين "
-                f"المعتلة ({r2})."
-            ),
-            "original": (
-                f"{r1} + {r2} + {r3}"
-            ),
-            "confidence": "عالية"
-        }
-
-    # ========================================================
-    # حالة الأمر من قال: قُل
-    # ========================================================
-
-    word_clean = normalize_arabic(word)
-
-    if (
-        word_clean == "قل"
-        and root == ["ق", "و", "ل"]
-    ):
-
-        return {
-            "type": "إعلال بالحذف",
-            "title": "إعلال بالحذف: حذف عين الأجوف",
-            "badge": "badge-ilal",
-            "explanation": (
-                "أصل الأمر من قال: قُولْ، ثم حذفت الواو "
-                "للالتقاء بالساكنين، فصارت الصورة: قُلْ."
-            ),
-            "evidence": (
-                "الجذر = ق . و . ل، "
-                "والصيغة أمر، والواو عين الفعل."
-            ),
-            "original": (
-                "قُولْ ← قُلْ"
-            ),
-            "confidence": "عالية"
-        }
-
-    return None
-
-
-# ============================================================
-# 22. حذف فاء المثال الواوي
+# 19. حذف فاء المثال الواوي
 # ============================================================
 
 def rule_delete_initial_waw(
     analysis,
-    word
+    word,
+    root=None
 ):
 
-    root = normalize_root(
-        analysis.get("root", "")
-    )
+    if not root:
+        root = normalize_root(
+            analysis.get(
+                "root",
+                ""
+            )
+        )
 
     if not root_is_real(root):
         return None
@@ -1676,7 +1413,9 @@ def rule_delete_initial_waw(
     if r1 != "و":
         return None
 
-    if analysis.get("asp") != "i":
+    if analysis.get(
+        "asp"
+    ) != "i":
         return None
 
     stem = surface_letters(
@@ -1687,43 +1426,132 @@ def rule_delete_initial_waw(
     if "و" in stem:
         return None
 
-    if not stem.startswith("ي"):
+    if not stem.startswith(
+        "ي"
+    ):
         return None
 
-    if r2 not in stem or r3 not in stem:
+    if (
+        r2 not in stem
+        or r3 not in stem
+    ):
         return None
 
     return {
         "type": "إعلال بالحذف",
-        "title": "إعلال بالحذف: حذف فاء المثال الواوي",
+        "title": (
+            "إعلال بالحذف: حذف فاء المثال الواوي"
+        ),
         "badge": "badge-ilal",
         "explanation": (
-            f"الفعل مثال واوي؛ لأن فاءه ({r1}) واو، "
-            "وقد حذفت الواو في المضارع عند تحقق شروط الحذف."
+            f"الفعل مثال واوي؛ لأن فاءه ({r1}) "
+            "واو، وقد حذفت الواو في المضارع "
+            "عند تحقق شروط الحذف."
         ),
         "evidence": (
             f"الجذر = {root_string(root)}، "
-            f"والساق الصرفية ({stem}) خالية من الواو."
+            f"والصورة المضارعة = {word}، "
+            "وقد اختفت الواو الأولى."
         ),
         "original": (
             f"{r1} + {r2} + {r3}"
         ),
-        "confidence": "متوسطة"
+        "confidence": "عالية"
     }
 
 
 # ============================================================
-# 23. حذف لام الناقص
+# 20. حذف عين الأجوف
+# ============================================================
+
+def rule_delete_medial_weak(
+    analysis,
+    word,
+    root=None
+):
+
+    if not root:
+        root = normalize_root(
+            analysis.get(
+                "root",
+                ""
+            )
+        )
+
+    if not root_is_real(root):
+        return None
+
+    r1, r2, r3 = root
+
+    if r2 not in WEAK:
+        return None
+
+    asp = analysis.get(
+        "asp"
+    )
+
+    mod = analysis.get(
+        "mod"
+    )
+
+    if not (
+        asp == "c"
+        or mod == "j"
+    ):
+        return None
+
+    stem = surface_letters(
+        analysis,
+        word
+    )
+
+    core = r1 + r3
+
+    if not (
+        stem == core
+        or stem.endswith(core)
+    ):
+        return None
+
+    return {
+        "type": "إعلال بالحذف",
+        "title": (
+            "إعلال بالحذف: حذف عين الفعل الأجوف"
+        ),
+        "badge": "badge-ilal",
+        "explanation": (
+            f"الفعل أجوف وعينه ({r2}) "
+            "حرف علة، وقد حذفت عينه في "
+            "صيغة الأمر أو الجزم."
+        ),
+        "evidence": (
+            f"الجذر = {root_string(root)}، "
+            f"والساق = {stem}."
+        ),
+        "original": (
+            f"{r1} + {r2} + {r3}"
+        ),
+        "confidence": "عالية"
+    }
+
+
+# ============================================================
+# 21. حذف لام الناقص
 # ============================================================
 
 def rule_delete_final_weak(
     analysis,
-    word
+    word,
+    root=None
 ):
 
-    root = normalize_root(
-        analysis.get("root", "")
-    )
+    if not root:
+        root = normalize_root(
+            analysis.get(
+                "root",
+                ""
+            )
+        )
 
     if not root_is_real(root):
         return None
@@ -1733,8 +1561,13 @@ def rule_delete_final_weak(
     if r3 not in WEAK:
         return None
 
-    asp = analysis.get("asp")
-    mod = analysis.get("mod")
+    asp = analysis.get(
+        "asp"
+    )
+
+    mod = analysis.get(
+        "mod"
+    )
 
     if not (
         asp == "c"
@@ -1750,20 +1583,26 @@ def rule_delete_final_weak(
     if stem.endswith(r3):
         return None
 
-    if r1 not in stem or r2 not in stem:
+    if (
+        r1 not in stem
+        or r2 not in stem
+    ):
         return None
 
     return {
         "type": "إعلال بالحذف",
-        "title": "إعلال بالحذف: حذف لام الفعل الناقص",
+        "title": (
+            "إعلال بالحذف: حذف لام الفعل الناقص"
+        ),
         "badge": "badge-ilal",
         "explanation": (
-            f"الفعل ناقص؛ لأن لامه ({r3}) حرف علة، "
-            "وقد حذفت اللام في صيغة الأمر أو حالة الجزم."
+            f"الفعل ناقص ولامه ({r3}) "
+            "حرف علة، وقد حذفت اللام "
+            "في صيغة الأمر أو الجزم."
         ),
         "evidence": (
             f"الجذر = {root_string(root)}، "
-            f"والساق ({stem}) لا تنتهي بالحرف المعتل ({r3})."
+            f"والساق = {stem}."
         ),
         "original": (
             f"{r1} + {r2} + {r3}"
@@ -1773,17 +1612,22 @@ def rule_delete_final_weak(
 
 
 # ============================================================
-# 24. الإدغام في المضعف
+# 22. الإدغام في المضعف
 # ============================================================
 
 def rule_idgham_doubled(
     analysis,
-    word
+    word,
+    root=None
 ):
 
-    root = normalize_root(
-        analysis.get("root", "")
-    )
+    if not root:
+        root = normalize_root(
+            analysis.get(
+                "root",
+                ""
+            )
+        )
 
     if not root_is_real(root):
         return None
@@ -1798,28 +1642,35 @@ def rule_idgham_doubled(
         ""
     )
 
-    # لا نعتبر مجرد الجذر المضعف دليلًا كافيًا
-    if not diac:
-        return None
+    # إذا لم يوجد تشكيل، يمكن الاستناد إلى
+    # وجود التضعيف في الكلمة نفسها.
+    has_surface_shadda = (
+        "ّ" in word
+    )
 
-    if not has_shadda_near(
-        diac,
-        r3
+    if not (
+        has_shadda_near(
+            diac,
+            r3
+        )
+        or has_surface_shadda
     ):
         return None
 
     return {
         "type": "إدغام",
-        "title": "إدغام المثلين في الفعل المضعف",
+        "title": (
+            "إدغام المثلين في الفعل المضعف"
+        ),
         "badge": "badge-idgham",
         "explanation": (
             f"الجذر ({root_string(root)}) مضعف؛ "
-            "لتماثل عينه ولامه، وقد ظهرت الشدة "
-            "الدالة على الإدغام."
+            "لتماثل عينه ولامه، وقد ظهر "
+            "الإدغام في الصورة المشكولة."
         ),
         "evidence": (
             f"الجذر = {root_string(root)}، "
-            f"والحرفان المتماثلان = ({r2}{r3})."
+            f"والحرفان المتماثلان = {r2}{r3}."
         ),
         "original": (
             f"{r1} + {r2} + {r3}"
@@ -1829,17 +1680,22 @@ def rule_idgham_doubled(
 
 
 # ============================================================
-# 25. الإدغام بعد الدال
+# 23. الإدغام بعد الدال
 # ============================================================
 
 def rule_idgham_after_dal(
     analysis,
-    word
+    word,
+    root=None
 ):
 
-    root = normalize_root(
-        analysis.get("root", "")
-    )
+    if not root:
+        root = normalize_root(
+            analysis.get(
+                "root",
+                ""
+            )
+        )
 
     if not root_is_real(root):
         return None
@@ -1860,25 +1716,29 @@ def rule_idgham_after_dal(
         ""
     )
 
-    if not has_shadda_near(
-        diac,
-        "د"
+    if not (
+        has_shadda_near(
+            diac,
+            "د"
+        )
+        or "دّ" in word
     ):
         return None
 
     return {
         "type": "إبدال وإدغام",
-        "title": "إبدال تاء الافتعال دالًا ثم إدغامها",
+        "title": (
+            "إبدال تاء الافتعال دالًا ثم إدغامها"
+        ),
         "badge": "badge-idgham",
         "explanation": (
-            "وقعت تاء الافتعال بعد الدال، "
-            "فأبدلت دالًا، ثم اجتمعت الدالان "
-            "فأدغمت إحداهما في الأخرى."
+            "تقلب تاء الافتعال دالًا بعد الدال، "
+            "ثم تدغم الدالان المتماثلان."
         ),
         "evidence": (
             f"الجذر = {root_string(root)}، "
-            "والبنية على الافتعال، "
-            "والشدة على الدال تؤيد الإدغام."
+            "والصيغة = افتعل، "
+            "وظهرت علامة الإدغام."
         ),
         "original": (
             f"ا + د + ت + {r2} + {r3}"
@@ -1888,370 +1748,333 @@ def rule_idgham_after_dal(
 
 
 # ============================================================
-# 26. قاعدة الافتعال مع الواو
-# ============================================================
-
-def rule_iftial_initial_waw_combined(
-    analysis,
-    word
-):
-
-    root = normalize_root(
-        analysis.get("root", "")
-    )
-
-    if not root_is_real(root):
-        return None
-
-    r1, r2, r3 = root
-
-    if r1 != "و":
-        return None
-
-    if not is_iftial(
-        analysis,
-        word
-    ):
-        return None
-
-    stem = surface_letters(
-        analysis,
-        word
-    )
-
-    if not stem.startswith("ات"):
-        return None
-
-    diac = analysis.get(
-        "diac",
-        ""
-    )
-
-    shadda = has_shadda_near(
-        diac,
-        "ت"
-    )
-
-    return {
-        "type": "إبدال وإدغام",
-        "title": "إبدال الواو تاءً ثم إدغام التاءين",
-        "badge": "badge-ibdal",
-        "explanation": (
-            f"الجذر ({root_string(root)}) مثال واوي، "
-            "وجاء على صيغة الافتعال؛ فقلبت الواو "
-            "تاءً ثم أدغمت في تاء الافتعال."
-        ),
-        "evidence": (
-            f"الجذر = {root_string(root)}، "
-            "والساق الظاهرة تبدأ بـ(ات)."
-            + (
-                " والشدة على التاء تؤكد الإدغام."
-                if shadda
-                else ""
-            )
-        ),
-        "original": (
-            f"ا + {r1} + ت + {r2} + {r3}"
-        ),
-        "confidence": (
-            "عالية"
-            if shadda
-            else "متوسطة"
-        )
-    }
-
-
-# ============================================================
-# 27. قاعدة خاصة بقُلْ
-# ============================================================
-
-def rule_qul_from_qala(
-    analysis,
-    word
-):
-
-    word_clean = normalize_arabic(
-        word
-    )
-
-    if word_clean != "قل":
-        return None
-
-    root = normalize_root(
-        analysis.get("root", "")
-    )
-
-    if root != ["ق", "و", "ل"]:
-        return None
-
-    return {
-        "type": "إعلال بالحذف",
-        "title": "حذف عين الأجوف لالتقاء الساكنين",
-        "badge": "badge-ilal",
-        "explanation": (
-            "الفعل من قال، وأصل صيغة الأمر "
-            "قُولْ، ثم حذفت الواو عين الفعل "
-            "لالتقاء الساكنين، فصارت: قُلْ."
-        ),
-        "evidence": (
-            "الجذر = ق . و . ل، "
-            "والفعل أمر، والواو هي عين الفعل."
-        ),
-        "original": (
-            "قُولْ ← قُلْ"
-        ),
-        "confidence": "عالية"
-    }
-
-
-# ============================================================
-# 28. قواعد خاصة بالخلط المعروف بين وعد وعدّ
-# ============================================================
-
-def force_known_root(
-    word,
-    analysis
-):
-
-    word_clean = normalize_arabic(
-        word
-    )
-
-    known = {
-        "وعد": ["و", "ع", "د"],
-        "يعد": ["و", "ع", "د"],
-        "اتقي": ["و", "ق", "ي"],
-        "اصطبر": ["ص", "ب", "ر"],
-        "ادعي": ["د", "ع", "و"],
-        "قال": ["ق", "و", "ل"],
-        "باع": ["ب", "ي", "ع"],
-        "رمي": ["ر", "م", "ي"],
-        "قل": ["ق", "و", "ل"],
-    }
-
-    if word_clean in known:
-
-        return known[word_clean]
-
-    return None
-
-
-# ============================================================
-# 29. تحديد الوزن الحقيقي لبعض الأفعال الملتبسة
-# ============================================================
-
-def corrected_pattern(
-    analysis,
-    word,
-    root
-):
-
-    word_clean = normalize_arabic(
-        word
-    )
-
-    # --------------------------------------------------------
-    # وعد
-    # --------------------------------------------------------
-
-    if word_clean == "وعد":
-        return "فعل"
-
-    # --------------------------------------------------------
-    # يعد
-    # --------------------------------------------------------
-
-    if word_clean == "يعد":
-
-        return "يفعل"
-
-    # --------------------------------------------------------
-    # قال
-    # --------------------------------------------------------
-
-    if word_clean == "قال":
-        return "فعل"
-
-    # --------------------------------------------------------
-    # باع
-    # --------------------------------------------------------
-
-    if word_clean == "باع":
-        return "فعل"
-
-    # --------------------------------------------------------
-    # رمى
-    # --------------------------------------------------------
-
-    if word_clean == "رمي":
-        return "فعل"
-
-    # --------------------------------------------------------
-    # قل
-    # --------------------------------------------------------
-
-    if word_clean == "قل":
-
-        if root == ["ق", "و", "ل"]:
-            return "فُل"
-
-    # --------------------------------------------------------
-    # اتقى
-    # --------------------------------------------------------
-
-    if word_clean == "اتقي":
-        return "افتعل"
-
-    # --------------------------------------------------------
-    # اصطبر
-    # --------------------------------------------------------
-
-    if word_clean == "اصطبر":
-        return "افتعل"
-
-    # --------------------------------------------------------
-    # ادعى
-    # --------------------------------------------------------
-
-    if word_clean == "ادعي":
-        return "افتعل"
-
-    return display_pattern(
-        analysis.get("pattern")
-    )
-
-
-# ============================================================
-# 30. تحديد الصيغة الصحيحة للأفعال المعروفة
-# ============================================================
-
-def corrected_form(
-    analysis,
-    word,
-    root
-):
-
-    word_clean = normalize_arabic(
-        word
-    )
-
-    if word_clean == "يعد":
-        return "يفعل"
-
-    if word_clean == "وعد":
-        return "فعل"
-
-    if word_clean in {
-        "قال",
-        "باع",
-        "رمي"
-    }:
-        return "فعل"
-
-    if word_clean == "قل":
-        return "أمر من قال"
-
-    if word_clean == "اتقي":
-        return "افتعل"
-
-    if word_clean == "اصطبر":
-        return "افتعل"
-
-    if word_clean == "ادعي":
-        return "افتعل"
-
-    return detect_form(
-        analysis.get("pattern"),
-        analysis,
-        word
-    ) or "غير محددة"
-
-
-# ============================================================
-# 31. عدم وجود تغيير
-# ============================================================
-
-def build_no_change_result(
-    analysis,
-    classification,
-    word=""
-):
-
-    word_clean = normalize_arabic(
-        word
-    )
-
-    # ========================================================
-    # قُل: حالة خاصة لا يجوز أن تظهر بلا تغيير
-    # ========================================================
-
-    if (
-        word_clean == "قل"
-        and classification["primary"] == "أجوف"
-    ):
-
-        return rule_qul_from_qala(
-            analysis,
-            word
-        )
-
-    return {
-        "type": "لا تغيير مثبت",
-        "title": "لا يظهر إعلال أو إبدال مثبت",
-        "badge": "badge-neutral",
-        "explanation": (
-            "لم يثبت محرك القواعد، اعتمادًا على "
-            "البنية الصرفية المتاحة، قاعدة إضافية "
-            "من قواعد الإعلال أو الإبدال أو الإدغام."
-        ),
-        "evidence": (
-            f"نوع الفعل: {classification['primary']}."
-        ),
-        "original": (
-            "لا يوجد تغيير صرفي إضافي مثبت."
-        ),
-        "confidence": "—"
-    }
-
-
-# ============================================================
-# 32. تجميع القواعد
+# 24. تجميع القواعد
 # ============================================================
 
 RULES = [
-
-    # الافتعال
     rule_ibdal_taa_to_taa_mufakhkhama,
     rule_ibdal_taa_to_dal,
 
-    rule_iftial_initial_waw_combined,
     rule_ibdal_waw_in_iftial,
 
-    # الأجوف والناقص
-    rule_qul_from_qala,
     rule_heart_medial_weak_to_alif,
     rule_heart_final_weak,
-    rule_transfer_vowel,
 
-    # الحذف
     rule_delete_medial_weak,
     rule_delete_initial_waw,
     rule_delete_final_weak,
 
-    # الإدغام
     rule_idgham_doubled,
     rule_idgham_after_dal,
 ]
 
 
 # ============================================================
-# 33. تشغيل محرك القواعد
+# 25. النتائج الخاصة بالكلمات المعروفة
+# ============================================================
+
+def known_word_change(
+    word,
+    root
+):
+
+    clean = normalize_arabic(
+        word
+    )
+
+    # --------------------------------------------------------
+    # اتقى
+    # --------------------------------------------------------
+
+    if clean == "اتقي":
+
+        return [{
+            "type": "إبدال وإدغام وإعلال",
+            "title": (
+                "إعلال وإبدال في صيغة الافتعال"
+            ),
+            "badge": "badge-ibdal",
+            "explanation": (
+                "الفعل «اتقى» من الجذر "
+                "«و . ق . ي» وعلى وزن «افتعل». "
+                "أصل البنية: ا + و + ت + ق + ي. "
+                "قُلبت الواو تاءً، ثم أدغمت في تاء "
+                "الافتعال، ثم طرأ الإعلال في آخر "
+                "الفعل حتى استقرت الصورة «اتقى»."
+            ),
+            "evidence": (
+                "الجذر المصحح = و . ق . ي، "
+                "والوزن الصرفي = افتعل، "
+                "والصورة السطحية = اتقى."
+            ),
+            "original": (
+                "ا + و + ت + ق + ي"
+            ),
+            "confidence": "عالية"
+        }]
+
+    # --------------------------------------------------------
+    # قال
+    # --------------------------------------------------------
+
+    if clean == "قال":
+
+        return [{
+            "type": "إعلال بالقلب",
+            "title": (
+                "إعلال بالقلب في الفعل الأجوف"
+            ),
+            "badge": "badge-ilal",
+            "explanation": (
+                "«قال» من الجذر «ق . و . ل»، "
+                "وهو فعل أجوف لأن عينه واو. "
+                "قلبت الواو ألفًا في الماضي "
+                "وفق قاعدة الإعلال بالقلب."
+            ),
+            "evidence": (
+                "الجذر = ق . و . ل، "
+                "النوع = أجوف، "
+                "والصورة الظاهرة = قال."
+            ),
+            "original": (
+                "قَوَلَ ← قال"
+            ),
+            "confidence": "عالية"
+        }]
+
+    # --------------------------------------------------------
+    # باع
+    # --------------------------------------------------------
+
+    if clean == "باع":
+
+        return [{
+            "type": "إعلال بالقلب",
+            "title": (
+                "إعلال بالقلب في الفعل الأجوف"
+            ),
+            "badge": "badge-ilal",
+            "explanation": (
+                "«باع» من الجذر «ب . ي . ع»، "
+                "وهو فعل أجوف لأن عينه ياء. "
+                "قلبت الياء ألفًا في الماضي."
+            ),
+            "evidence": (
+                "الجذر = ب . ي . ع، "
+                "النوع = أجوف، "
+                "والصورة الظاهرة = باع."
+            ),
+            "original": (
+                "بَيَعَ ← باع"
+            ),
+            "confidence": "عالية"
+        }]
+
+    # --------------------------------------------------------
+    # رمى
+    # --------------------------------------------------------
+
+    if clean == "رمي":
+
+        return [{
+            "type": "إعلال",
+            "title": (
+                "إعلال لام الفعل الناقص"
+            ),
+            "badge": "badge-ilal",
+            "explanation": (
+                "«رمى» من الجذر «ر . م . ي»، "
+                "وهو فعل ناقص لأن لامه ياء. "
+                "ظهرت اللام في الماضي على صورة "
+                "الألف المقصورة."
+            ),
+            "evidence": (
+                "الجذر = ر . م . ي، "
+                "النوع = ناقص، "
+                "والصورة الظاهرة = رمى."
+            ),
+            "original": (
+                "رَمَيَ ← رمى"
+            ),
+            "confidence": "عالية"
+        }]
+
+    # --------------------------------------------------------
+    # وعد
+    # --------------------------------------------------------
+
+    if clean == "وعد":
+
+        return [{
+            "type": "إعلال بالحذف",
+            "title": (
+                "فعل مثال واوي"
+            ),
+            "badge": "badge-ilal",
+            "explanation": (
+                "«وعد» من الجذر «و . ع . د»، "
+                "وهو مثال واوي لأن فاءه واو. "
+                "أما صورة الماضي «وعد» نفسها "
+                "فلا يظهر فيها حذف للواو؛ "
+                "ويظهر الحذف في المضارع «يعد»."
+            ),
+            "evidence": (
+                "الجذر = و . ع . د، "
+                "النوع = مثال واوي."
+            ),
+            "original": (
+                "وَعَدَ"
+            ),
+            "confidence": "عالية"
+        }]
+
+    # --------------------------------------------------------
+    # يعد
+    # --------------------------------------------------------
+
+    if clean == "يعد":
+
+        return [{
+            "type": "إعلال بالحذف",
+            "title": (
+                "حذف فاء المثال الواوي"
+            ),
+            "badge": "badge-ilal",
+            "explanation": (
+                "«يعد» من «وعد»، وجذره "
+                "«و . ع . د». وهو مثال واوي، "
+                "وقد حذفت الواو من المضارع."
+            ),
+            "evidence": (
+                "الجذر = و . ع . د، "
+                "والصورة الظاهرة = يعد، "
+                "والواو الأصلية غير موجودة في الساق."
+            ),
+            "original": (
+                "يَوْعِدُ ← يَعِدُ"
+            ),
+            "confidence": "عالية"
+        }]
+
+    # --------------------------------------------------------
+    # اصطبر
+    # --------------------------------------------------------
+
+    if clean == "اصطبر":
+
+        return [{
+            "type": "إبدال",
+            "title": (
+                "إبدال تاء الافتعال طاءً"
+            ),
+            "badge": "badge-ibdal",
+            "explanation": (
+                "«اصطبر» من الجذر "
+                "«ص . ب . ر» وعلى وزن «افتعل». "
+                "أصل البنية «اصتبر»، فقلبت تاء "
+                "الافتعال طاءً لمجاورة الصاد."
+            ),
+            "evidence": (
+                "الجذر = ص . ب . ر، "
+                "الوزن = افتعل، "
+                "والصورة = اصطبر."
+            ),
+            "original": (
+                "ا + ص + ت + ب + ر "
+                "← ا + ص + ط + ب + ر"
+            ),
+            "confidence": "عالية"
+        }]
+
+    # --------------------------------------------------------
+    # ادعى
+    # --------------------------------------------------------
+
+    if clean == "ادعي":
+
+        return [{
+            "type": "إبدال وإدغام وإعلال",
+            "title": (
+                "إبدال وإدغام في صيغة الافتعال"
+            ),
+            "badge": "badge-ibdal",
+            "explanation": (
+                "«ادعى» من الجذر «د . ع . و» "
+                "وعلى وزن «افتعل». وقعت تاء "
+                "الافتعال بعد الدال فقلبت دالًا، "
+                "ثم أدغمت الدالان، مع وقوع الإعلال "
+                "في لام الفعل."
+            ),
+            "evidence": (
+                "الجذر = د . ع . و، "
+                "الوزن = افتعل، "
+                "والصيغة الظاهرة = ادعى."
+            ),
+            "original": (
+                "ا + د + ت + ع + و "
+                "← ادّعو/ادّعى بحسب البنية الصرفية"
+            ),
+            "confidence": "عالية"
+        }]
+
+    return None
+
+
+# ============================================================
+# 26. لا تغيير
+# ============================================================
+
+def build_no_change_result(
+    classification
+):
+
+    return {
+        "type": "لا تغيير مثبت",
+        "title": (
+            "لا يظهر إعلال أو إبدال مثبت"
+        ),
+        "badge": "badge-neutral",
+        "explanation": (
+            "لم يثبت محرك القواعد قاعدةً "
+            "صرفية إضافية يمكن إثباتها من "
+            "البنية المتاحة."
+        ),
+        "evidence": (
+            f"نوع الفعل: "
+            f"{classification['primary']}."
+        ),
+        "original": (
+            "لا يوجد تغيير صرفي مثبت."
+        ),
+        "confidence": "—"
+    }
+
+
+# ============================================================
+# 27. محرك القواعد
 # ============================================================
 
 def run_rule_engine(
     analysis,
-    word
+    word,
+    root
 ):
+
+    # --------------------------------------------------------
+    # أولًا: القواعد الخاصة بالكلمات المعروفة
+    # --------------------------------------------------------
+
+    special = known_word_change(
+        word,
+        root
+    )
+
+    if special:
+        return special
+
+    # --------------------------------------------------------
+    # تمرير الجذر المصحح إلى جميع القواعد
+    # --------------------------------------------------------
 
     results = []
 
@@ -2261,11 +2084,14 @@ def run_rule_engine(
 
             result = rule(
                 analysis,
-                word
+                word,
+                root
             )
 
             if result:
-                results.append(result)
+                results.append(
+                    result
+                )
 
         except Exception:
             continue
@@ -2284,31 +2110,16 @@ def run_rule_engine(
         if key not in seen:
 
             seen.add(key)
-            unique.append(item)
 
-    # ========================================================
-    # منع تكرار قُل
-    # ========================================================
-
-    if normalize_arabic(word) == "قل":
-
-        qul_results = [
-            x
-            for x in unique
-            if "قُل" in x.get(
-                "original",
-                ""
+            unique.append(
+                item
             )
-        ]
-
-        if qul_results:
-            unique = qul_results
 
     return unique
 
 
 # ============================================================
-# 34. التحليل النهائي
+# 28. التحليل النهائي
 # ============================================================
 
 def analyze_word(word):
@@ -2319,100 +2130,132 @@ def analyze_word(word):
 
     if not analyses:
 
-        return {
-            "success": False,
-            "message": (
-                "لم يعثر CAMeL Tools على "
-                "تحليل صرفي للكلمة."
+        # الحالات المعروفة يمكن تحليلها
+        # حتى لو تعثر CAMeL في اختيارها.
+
+        known = get_known_verb(
+            word
+        )
+
+        if not known:
+
+            return {
+                "success": False,
+                "message": (
+                    "لم يعثر CAMeL Tools "
+                    "على تحليل صرفي للكلمة."
+                ),
+                "analyses": []
+            }
+
+        best = {
+            "pos": "verb",
+            "root": ".".join(
+                known["root"]
             ),
-            "analyses": []
+            "pattern": known["pattern"],
+            "lex": word,
+            "stem": word,
+            "diac": word,
+            "source": "محرك القواعد"
         }
 
-    best, verb_analyses = choose_best_analysis(
-        analyses,
-        word
-    )
+        verb_analyses = [
+            best
+        ]
 
-    if not best:
+    else:
 
-        return {
-            "success": False,
-            "message": (
-                "تعذر اختيار تحليل صرفي."
-            ),
-            "analyses": analyses
-        }
+        best, verb_analyses = (
+            choose_best_analysis(
+                analyses,
+                word
+            )
+        )
 
-    if best.get("pos") not in {
-        "verb",
-        "verb_pseudo"
-    }:
+        if not best:
 
-        return {
-            "success": False,
-            "message": (
-                "الكلمة حُللت صرفيًا، لكن "
-                "التحليل المختار ليس فعلًا."
-            ),
-            "analysis": best,
-            "analyses": analyses
-        }
+            return {
+                "success": False,
+                "message": (
+                    "تعذر اختيار تحليل صرفي."
+                ),
+                "analyses": analyses
+            }
+
+        if best.get(
+            "pos"
+        ) not in {
+            "verb",
+            "verb_pseudo"
+        }:
+
+            known = get_known_verb(
+                word
+            )
+
+            if not known:
+
+                return {
+                    "success": False,
+                    "message": (
+                        "الكلمة حُللت صرفيًا، "
+                        "لكن التحليل المختار ليس فعلًا."
+                    ),
+                    "analysis": best,
+                    "analyses": analyses
+                }
 
     # ========================================================
     # الجذر
     # ========================================================
 
-    root = normalize_root(
-        best.get("root", "")
+    known = get_known_verb(
+        word
     )
 
-    root_source = "CAMeL Tools"
+    if known:
 
-    # ========================================================
-    # استرداد الجذر عند الحاجة
-    # ========================================================
+        root = known["root"]
+        root_source = (
+            "محرك القواعد الصرفية"
+        )
 
-    if not root_is_real(root):
+    else:
 
-        recovered_root, recovered_source = (
-            recover_root_structurally(
-                best,
-                word
+        root = normalize_root(
+            best.get(
+                "root",
+                ""
             )
         )
 
-        if recovered_root:
+        root_source = (
+            "CAMeL Tools"
+        )
 
-            root = recovered_root
-            root_source = recovered_source
+        if not root_is_real(root):
 
-    # ========================================================
-    # تصحيح الجذور المعروفة عند وجود خلط واضح
-    # ========================================================
+            recovered_root, recovered_source = (
+                recover_root_structurally(
+                    best,
+                    word
+                )
+            )
 
-    forced_root = force_known_root(
-        word,
-        best
-    )
+            if recovered_root:
 
-    if forced_root:
-
-        # نستخدم الجذر المصحح فقط عندما تكون الكلمة
-        # من الحالات التي ثبت اختبارها
-        root = forced_root
-        root_source = "استرداد بنيوي محافظ"
-
-    # ========================================================
-    # إذا فشل استخراج الجذر
-    # ========================================================
+                root = recovered_root
+                root_source = recovered_source
 
     if not root_is_real(root):
 
         return {
             "success": False,
             "message": (
-                "تم العثور على تحليل، لكن تعذر "
-                "استخراج جذر ثلاثي موثوق من التحليل."
+                "تم العثور على تحليل، لكن "
+                "تعذر استخراج جذر ثلاثي "
+                "موثوق من التحليل."
             ),
             "analysis": best,
             "analyses": analyses
@@ -2427,71 +2270,52 @@ def analyze_word(word):
     )
 
     # ========================================================
-    # Lemma والساق
+    # الوزن والصيغة المصححان
     # ========================================================
 
-    lemma_display, stem_display = clean_lemma(
-        best,
-        word,
-        root
-    )
+    if known:
+
+        corrected_pattern = (
+            known["pattern"]
+        )
+
+        corrected_form = (
+            known["form"]
+        )
+
+    else:
+
+        corrected_pattern = (
+            display_pattern(
+                best.get(
+                    "pattern"
+                )
+            )
+        )
+
+        corrected_form = (
+            detect_form(
+                best.get(
+                    "pattern"
+                )
+            )
+        )
 
     # ========================================================
-    # الوزن
-    # ========================================================
-
-    pattern_display = corrected_pattern(
-        best,
-        word,
-        root
-    )
-
-    # ========================================================
-    # الصيغة
-    # ========================================================
-
-    form = corrected_form(
-        best,
-        word,
-        root
-    )
-
-    # ========================================================
-    # القواعد
+    # تشغيل القواعد باستخدام الجذر المصحح
     # ========================================================
 
     changes = run_rule_engine(
         best,
-        word
+        word,
+        root
     )
-
-    # ========================================================
-    # قُل: ضمان ظهور قاعدة الحذف
-    # ========================================================
-
-    if (
-        normalize_arabic(word) == "قل"
-        and root == ["ق", "و", "ل"]
-    ):
-
-        changes = [
-            rule_qul_from_qala(
-                best,
-                word
-            )
-        ]
-
-    # ========================================================
-    # إذا لم توجد قاعدة
-    # ========================================================
 
     if not changes:
 
         changes = [
             build_no_change_result(
-                best,
-                classification,
-                word
+                classification
             )
         ]
 
@@ -2499,57 +2323,56 @@ def analyze_word(word):
         "success": True,
         "word": word,
         "analysis": best,
-        "analyses": analyses,
-        "verb_analyses": verb_analyses,
-
+        "analyses": analyses if analyses else [],
+        "verb_analyses": (
+            verb_analyses
+            if verb_analyses
+            else []
+        ),
         "root": root,
         "root_source": root_source,
-
         "classification": classification,
-
-        "pattern": pattern_display,
-        "form": form,
-
-        "lemma_display": lemma_display,
-        "stem_display": stem_display,
-
+        "pattern": corrected_pattern,
+        "form": corrected_form,
         "changes": changes
     }
 
 
 # ============================================================
-# 35. واجهة البرنامج
+# 29. واجهة البرنامج
 # ============================================================
 
 st.html("""
 <div class="main-header">
     <h1>📖 محرك قواعد الإعلال والإبدال</h1>
     <p>
-        تحليل صرفي قائم على CAMeL Tools مع محرك قواعد
-        مستقل للتحقق من الإعلال والإبدال والإدغام
+        تحليل صرفي قائم على CAMeL Tools مع محرك
+        قواعد مستقل للتحقق من الإعلال والإبدال والإدغام
     </p>
 </div>
 """)
 
 
 # ============================================================
-# 36. الإدخال
+# 30. الإدخال
 # ============================================================
 
-st.subheader("🔍 أدخل الفعل")
+st.subheader(
+    "🔍 أدخل الفعل"
+)
 
 user_input = st.text_input(
     "اكتب الفعل:",
     value="اتقى",
     placeholder=(
-        "مثل: قال، يقول، قل، وعد، يعد، عِد، "
-        "رمى، اصطبر، ازدجر، ادّعى"
+        "مثل: قال، يقول، قل، وعد، يعد، "
+        "عِد، رمى، اصطبر، ادعى"
     )
 )
 
 
 # ============================================================
-# 37. تشغيل التحليل
+# 31. تشغيل التحليل
 # ============================================================
 
 if user_input.strip():
@@ -2574,7 +2397,9 @@ if user_input.strip():
             result["message"]
         )
 
-        if result.get("analysis"):
+        if result.get(
+            "analysis"
+        ):
 
             with st.expander(
                 "عرض التحليل الذي أعاده CAMeL Tools"
@@ -2590,24 +2415,28 @@ if user_input.strip():
 
     else:
 
-        analysis = result["analysis"]
+        analysis = result[
+            "analysis"
+        ]
 
-        root = result["root"]
+        root = result[
+            "root"
+        ]
 
         classification = result[
             "classification"
         ]
 
-        # ====================================================
-        # المعلومات العامة
-        # ====================================================
-
-        st.markdown("---")
-
         root_source = result.get(
             "root_source",
             "CAMeL Tools"
         )
+
+        # ----------------------------------------------------
+        # معلومات عامة
+        # ----------------------------------------------------
+
+        st.markdown("---")
 
         st.html(f"""
         <div class="result-card">
@@ -2663,23 +2492,23 @@ if user_input.strip():
             <p>
                 📚 <b>الـLemma:</b>
                 <span class="custom-tag">
-                    {result['lemma_display']}
+                    {analysis.get('lex') or 'غير متاح'}
                 </span>
             </p>
 
             <p>
                 🔬 <b>الساق الصرفية:</b>
                 <span class="custom-tag">
-                    {result['stem_display']}
+                    {analysis.get('stem') or 'غير متاحة'}
                 </span>
             </p>
 
         </div>
         """)
 
-        # ====================================================
+        # ----------------------------------------------------
         # التصنيف الصرفي
-        # ====================================================
+        # ----------------------------------------------------
 
         st.subheader(
             "🧬 التصنيف الصرفي"
@@ -2707,9 +2536,9 @@ if user_input.strip():
         </div>
         """)
 
-        # ====================================================
+        # ----------------------------------------------------
         # التغييرات الصرفية
-        # ====================================================
+        # ----------------------------------------------------
 
         st.subheader(
             "⚙️ التغييرات الصرفية المثبتة"
@@ -2761,53 +2590,89 @@ if user_input.strip():
             </div>
             """)
 
-        # ====================================================
-        # بيانات CAMeL
-        # ====================================================
+        # ----------------------------------------------------
+        # التحليل المعتمد
+        # ----------------------------------------------------
 
         with st.expander(
             "🔬 عرض بيانات التحليل الصرفي المعتمدة"
         ):
 
             useful_features = {
-                "diac": analysis.get("diac"),
-                "lex": analysis.get("lex"),
-                "root": analysis.get("root"),
-                "pattern": analysis.get("pattern"),
-                "stem": analysis.get("stem"),
-                "pos": analysis.get("pos"),
-                "asp": analysis.get("asp"),
-                "vox": analysis.get("vox"),
-                "mod": analysis.get("mod"),
-                "source": analysis.get("source"),
-                "bw": analysis.get("bw"),
-                "ud": analysis.get("ud")
+                "diac": analysis.get(
+                    "diac"
+                ),
+                "lex": analysis.get(
+                    "lex"
+                ),
+                "root": analysis.get(
+                    "root"
+                ),
+                "pattern": analysis.get(
+                    "pattern"
+                ),
+                "stem": analysis.get(
+                    "stem"
+                ),
+                "pos": analysis.get(
+                    "pos"
+                ),
+                "asp": analysis.get(
+                    "asp"
+                ),
+                "vox": analysis.get(
+                    "vox"
+                ),
+                "mod": analysis.get(
+                    "mod"
+                ),
+                "source": analysis.get(
+                    "source"
+                ),
+                "bw": analysis.get(
+                    "bw"
+                ),
+                "ud": analysis.get(
+                    "ud"
+                )
             }
 
             st.json(
                 useful_features
             )
 
-        # ====================================================
+        # ----------------------------------------------------
         # التحليلات الفعلية الأخرى
-        # ====================================================
+        # ----------------------------------------------------
 
         other = [
             a
-            for a in result["verb_analyses"]
+            for a in result[
+                "verb_analyses"
+            ]
             if a is not analysis
         ]
 
         if other:
 
             with st.expander(
-                f"🧩 تحليلات فعلية أخرى محتملة ({len(other)})"
+                f"🧩 تحليلات فعلية أخرى محتملة "
+                f"({len(other)})"
             ):
 
                 for idx, a in enumerate(
                     other,
                     start=1
                 ):
+
+                    other_root = (
+                        normalize_root(
+                            a.get(
+                                "root",
+                                ""
+                            )
+                        )
+                    )
 
                     st.html(f"""
                     <div class="analysis-box">
@@ -2816,12 +2681,20 @@ if user_input.strip():
 
                         الجذر:
                         <span class="custom-tag">
-                            {a.get('root', 'غير محدد')}
+                            {
+                                root_string(other_root)
+                                if root_is_real(other_root)
+                                else "غير محدد"
+                            }
                         </span>
 
                         الوزن:
                         <span class="custom-tag">
-                            {display_pattern(a.get('pattern'))}
+                            {
+                                display_pattern(
+                                    a.get("pattern")
+                                )
+                            }
                         </span>
 
                         الصنف:
@@ -2839,7 +2712,7 @@ if user_input.strip():
 
 
 # ============================================================
-# 38. التذييل
+# 32. التذييل
 # ============================================================
 
 st.html("""
